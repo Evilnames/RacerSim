@@ -1,7 +1,9 @@
-import random, datetime
+import random, datetime, math
 from operator import itemgetter
 
-# Add in reliability issues, DNF
+# Add Weather into races and its affects
+# Build out an AI for pit stops
+# Create some distance between people and make it more challenging to pass
 def resetDriverScores(race):
     for driver in drivers:
         driver["Time"] = 0
@@ -12,10 +14,83 @@ def resetDriverScores(race):
         driver["LastSegmentTime"] = 0
         driver["Results"][race["Name"]] = {}
 
+def lightOrHeavyRain():
+    chance = random.randrange(1,7)
+    if(chance < 5):
+        return "lightrain"
+    else:
+        return "heavyrain"
+
+def checkSkyConditions(chanceOfRainToday):
+    chance = random.randrange(1,7)
+    chanceOfClouds = 1
+    if(chanceOfRainToday == 1):
+        chanceOfRainToday += 2
+
+    if(chance < chanceOfRainToday):
+        return "cloudy"
+    else:
+        return "clear"
+
+def calculateWeather(race):
+    weatherForecast = []
+    rainPossible = 0
+    rainChance = regionWeatherRules[race["Region"]]["RainChance"][race["Month"]-1]
+
+    #Check if there will be rain today
+    rainRoll = random.randrange(1,101)
+
+    #We can have a possibility of rain
+    if(rainChance < rainRoll):
+        rainPossible = 1
+    
+    rainLastLap = 0
+    rainingAtStartOfRace = random.randrange(1,7)
+
+    priorLapWeather = ""
+    for i in range(race['Laps']):
+        forecast = ""
+        allowChange = 0
+        if(i == 0 and rainingAtStartOfRace < 3 and rainPossible == 1):
+            forecast = lightOrHeavyRain()
+        # If it is already raining we check to see if it keeps raining
+        elif(priorLapWeather == "lightrain" or priorLapWeather == "heavyrain"):
+            isItStillRaining = random.randrange(1,7)
+            if(isItStillRaining < 5):
+                forecast = lightOrHeavyRain()
+            else:
+                forecast = "cloudy"
+        # See if it is going to start raining again
+        elif(rainPossible == 1):
+            willTheRainOpenBackUp = random.randrange(1,7)
+            if(willTheRainOpenBackUp < 2):
+                forecast = lightOrHeavyRain()
+            else:
+                forecast = checkSkyConditions(rainPossible)
+        elif(rainPossible == 0):
+            forecast = checkSkyConditions(rainPossible)
+        
+        #This function should really be recursive
+        # Lets check to see if the weather actually changes, we do not want crazy differences from lap to lap since the time is low
+        if(i != 0):
+            weatherChangeCheck = random.randrange(1,7)
+            if(weatherChangeCheck < 5):
+                forecast = priorLapWeather
+
+        priorLapWeather = forecast
+        weatherForecast.append(forecast)
+
+    return weatherForecast
+
 def performRace(race, drivers):
+    #Tracks if we are under a yellow flag for the rae.
     YellowFlagYn = 0
+    #Get the weather forecast for the race
+    weatherForceast = calculateWeather(race)
+
     #Reset all of our scores to 0
     resetDriverScores(race)
+    
     # Run our race
     for i in range(race["Laps"]):
         # Check to see if yellow has a chance of going away
@@ -26,6 +101,9 @@ def performRace(race, drivers):
             else:
                 race["LapUnderYellow"] += 1
 
+        #Get our weather details
+        weatherSpeedReduction = weather[weatherForceast[i]]["SpeedReduction"]
+        
         driverIterator = 0
         for driver in drivers:
             if(driver["RetiredYn"] == 0):
@@ -44,6 +122,10 @@ def performRace(race, drivers):
                     segmentFastTime = segment["LowTime"]
                     segmentSlowTime = segment["HighTime"]
                     segmentCarTest = segment["CarTest"]
+
+                    #Modify times for the weather
+                    segmentFastTime += segmentFastTime * math.floor(weatherSpeedReduction / 100)
+                    segmentSlowTime += segmentSlowTime * math.floor(weatherSpeedReduction / 100)
 
                     # If this is a yellow flag then everyone slows down
                     if(YellowFlagYn == 1):
@@ -216,9 +298,9 @@ drivers = [
             {"Name":"George Russell",       "Make":"Williams",       "Driver": {"Steering":2, "Cornering":1, "Tempurment":5}, "Car": {"Acceleration":3, "Cornering":2, "Suspension":2, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "LastSegmentTime":0,"RetiredYn": 0, "StopCount":0, "Championship":0, "Results":{}},
             {"Name":"Nicholas Latifi",      "Make":"Williams",       "Driver": {"Steering":2, "Cornering":1, "Tempurment":5}, "Car": {"Acceleration":3, "Cornering":2, "Suspension":2, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "LastSegmentTime":0,"RetiredYn": 0, "StopCount":0, "Championship":0, "Results":{}},
           ]
-races = [   {"Name":"Austrian Grand Prix",          "Laps":71, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00, "Pit":{"BasePitTime":25}, "Segments":[{"PassModifier":5, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":32, "HighTime":45},   {"PassModifier":4,  "Test":"Cornering", "CarTest":"Cornering",  "LowTime":19, "HighTime":25},        {"PassModifier":6, "CarTest":"Suspension", "Test":"Cornering",  "LowTime":43, "HighTime":55}]}, 
-            {"Name":"Hungarian Grand Prix",         "Laps":70, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":35}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Cornering", "LowTime":50, "HighTime":56},   {"PassModifier":2, "Test":"Cornering",   "CarTest":"Acceleration",  "LowTime":43, "HighTime":49},        {"PassModifier":1, "CarTest":"Suspension", "Test":"Steering",   "LowTime":63, "HighTime":69}]}, 
-            {"Name":"British Grand Prix",           "Laps":52, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":20}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":23, "HighTime":29},   {"PassModifier":3,  "Test":"Cornering", "CarTest":"Suspension",  "LowTime":43, "HighTime":56},        {"PassModifier":3, "CarTest":"Cornering", "Test":"Steering",   "LowTime":24, "HighTime":34}]},
+races = [   {"Name":"Austrian Grand Prix",          "Laps":71, "FastestLap":0.00, "LapUnderYellow":0, "Month":6, "Region":"Central Europe","SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00, "Pit":{"BasePitTime":25}, "Segments":[{"PassModifier":5, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":32, "HighTime":45},   {"PassModifier":4,  "Test":"Cornering", "CarTest":"Cornering",  "LowTime":19, "HighTime":25},        {"PassModifier":6, "CarTest":"Suspension", "Test":"Cornering",  "LowTime":43, "HighTime":55}]}, 
+            {"Name":"Hungarian Grand Prix",         "Laps":70, "FastestLap":0.00, "LapUnderYellow":0, "Month":7, "Region":"Central Europe","SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":35}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Cornering", "LowTime":50, "HighTime":56},   {"PassModifier":2, "Test":"Cornering",   "CarTest":"Acceleration",  "LowTime":43, "HighTime":49},        {"PassModifier":1, "CarTest":"Suspension", "Test":"Steering",   "LowTime":63, "HighTime":69}]}, 
+            {"Name":"British Grand Prix",           "Laps":52, "FastestLap":0.00, "LapUnderYellow":0, "Month":8, "Region":"British Isles","SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":20}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":23, "HighTime":29},   {"PassModifier":3,  "Test":"Cornering", "CarTest":"Suspension",  "LowTime":43, "HighTime":56},        {"PassModifier":3, "CarTest":"Cornering", "Test":"Steering",   "LowTime":24, "HighTime":34}]},
         ]
 points = [25,18,15,12,10,8,6,4,2,1]
 tires  = {  
@@ -226,10 +308,26 @@ tires  = {
             # SuccessBonus - When we succeed on a sector what is the maximum we can gain from that section
             # Reduction Threshold - This is the point where tires start to reduce the possibility of getting a bonus
             # NormalPitRangeStart - When does the game start thinking about a pit stop?
-            "Soft" :    {"NormalWear":2, "SuccessBonus":4, "ReductionThreshold":50,     "NormalPitRangeStart":50, "CriticalErrorTireWear": 3},
-            "Medium" :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":35,    "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2},
-            "Hard" :    {"NormalWear":1, "SuccessBonus":2, "ReductionThreshold":25,    "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1},
+            "Soft"          :  {"NormalWear":2,   "SuccessBonus":4, "ReductionThreshold":50,     "NormalPitRangeStart":50, "CriticalErrorTireWear" : 3},
+            "Medium"        :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":35,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2},
+            "Hard"          :  {"NormalWear":1,   "SuccessBonus":2, "ReductionThreshold":25,     "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1},
+            "Wet"           :  {"NormalWear":.25, "SuccessBonus":1, "ReductionThreshold":15,     "NormalPitRangeStart":15, "CriticalErrorTireWear" : 1},
+            "Intermediate"  :  {"NormalWear":.50, "SuccessBonus":1, "ReductionThreshold":25,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 1},
         }
+# Ideal tire will tell the racers what they should most likely start on
+# Speed reduction is what % we are going to reduce the lowest/highest item by
+weather = {
+    "lightrain"     : {"Name":"Light Rain", "IdealTire":"Intermediate", "SpeedReduction":60},
+    "cloudy"        : {"Name":"Cloudy",     "IdealTire":"Soft",         "SpeedReduction":10},
+    "heavyrain"     : {"Name":"Heavy Rain", "IdealTire":"Wet",          "SpeedReduction":85},
+    "clear"         : {"Name":"Clear",      "IdealTire":"Soft",         "SpeedReduction":0}
+}
+regionWeatherRules = {
+    # Rain chance tells us that during this month we expect an X percentage chance that there will be rain on this day.
+    # High Tempature is in F
+    "Central Europe" : {"RainChance":[15,15,15,15,25,20,15,15,10,10,20,20], "HighTempature":[38,43,53,63,73,78,82,82,73,62,49,40]},
+    "British Isles"  : {"RainChance":[40,30,30,30,27,27,25,25,27,33,33,33], "HighTempature":[48,49,53,59,65,70,74,73,67,60,53,48]}
+}
 
 # Run each race and report our results
 for race in races:
