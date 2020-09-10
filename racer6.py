@@ -22,15 +22,19 @@ def performRace(race, drivers):
             yellowFlagRoll = random.randrange(1,7)
             if(yellowFlagRoll > 3):
                 YellowFlagYn = 0
+            else:
+                race["LapUnderYellow"] += 1
 
         for driver in drivers:
             if(driver["RetiredYn"] == 0):
                 currentLapTime = 0
-                NormalTireWear = tires[driver["TireType"]]["NormalWear"]
-                NormalPitRangeStart = tires[driver["TireType"]]["NormalPitRangeStart"]
-                CriticalErrorTireWear = tires[driver["TireType"]]["CriticalErrorTireWear"]
 
-                driver["TireWear"] -= NormalTireWear
+                # This is some details about our tires
+                NormalTireWear =        tires[driver["TireType"]]["NormalWear"]
+                NormalPitRangeStart =   tires[driver["TireType"]]["NormalPitRangeStart"]
+                CriticalErrorTireWear = tires[driver["TireType"]]["CriticalErrorTireWear"]
+                ReductionThreshold  =   tires[driver["TireType"]]["ReductionThreshold"]
+
                 for segment in race["Segments"]:
                     #Get Segment Details
                     segmentBonus = segment["PassModifier"]
@@ -61,21 +65,35 @@ def performRace(race, drivers):
                         elif(testDriverRoll == 6 and driverSkillCheck != 6):
                             currentLapTime += segmentBonus
 
+                        # Here we check our tires
+                        # There is a chance that our tires are really worn and blow our chance at
+                        # The fastest lap possible.
+                        tireWearReductionTest = random.randrange(1,101)
+                        if(tireWearReductionTest > ReductionThreshold):
+                            carSkillCheckReduction = -2
+                        else:
+                            carSkillCheckReduction = 0
+
                         # Do a car check against the course
-                        if(testCarRoll <= carSkillCheck):
+                        if(testCarRoll <= carSkillCheck + carSkillCheckReduction):
                             currentLapTime -= segmentBonus
                         elif(testCarRoll == 6 and carSkillCheck != 6):
                             currentLapTime += segmentBonus
                             driver["TireWear"] -= CriticalErrorTireWear
+
                             # Do a reliability roll here to see if the car just takes a shit and is DNF
-                            
                             testEngineHiccup = random.randrange(1,7)
+                            # If we fail our engine hiccup
                             if(testEngineHiccup > 5):
+                                # Test to see if the engine messed up
                                 engineReliabilityRoll = random.randrange(1,101)
+                                # if it is higher then we have an issue
                                 if(engineReliabilityRoll > driver["Car"]["EngineReliability"]):
                                     testDNF = random.randrange(1,7)
+                                    # There is a slight chance that this means that we are disqualified
                                     if(testDNF == 6):
                                         driver["RetiredYn"] = 1
+                                        # There is another chance that we smash so hard into a wall that it forces a yellow flag
                                         testYellowFlagGo = random.randrange(1,7)
                                         if(testYellowFlagGo >= 5):
                                             YellowFlagYn = 1
@@ -109,6 +127,10 @@ def performRace(race, drivers):
                         driver["StopCount"] += 1
                         # print("Pit End " + str(currentLapTime))
 
+
+                # Update our tire wear with our normal tire wear at the end of the lap
+                driver["TireWear"] -= NormalTireWear
+
                 driver["Time"] += currentLapTime
                 driver["Results"][race["Name"]][i] = {}
                 driver["Results"][race["Name"]][i]["LapTime"] = currentLapTime
@@ -131,6 +153,7 @@ def performRace(race, drivers):
     print( race["Name"] + " Results")
     print("Race Time Range ("+ str(datetime.timedelta(seconds=race["FastTotalTime"])) +" - "+ str(datetime.timedelta(seconds=race["SlowTotalTime"])) +")")
     print("Lap Time Range ("+ str(datetime.timedelta(seconds=race["FastestLap"])) +" - "+ str(datetime.timedelta(seconds=race["SlowestLap"])) +")")
+    print("Laps Under Yellow:" + str(race["LapUnderYellow"]))
     print("-------------")
     for driver in drivers:
         if polePosition < len(points):
@@ -178,20 +201,19 @@ drivers = [
             {"Name":"George Russell",       "Make":"Williams",       "Driver": {"Steering":2, "Cornering":1, "Tempurment":5}, "Car": {"Acceleration":3, "Cornering":2, "Suspension":2, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0,"RetiredYn": 0, "StopCount":0, "Championship":0, "Results":{}},
             {"Name":"Nicholas Latifi",      "Make":"Williams",       "Driver": {"Steering":2, "Cornering":1, "Tempurment":5}, "Car": {"Acceleration":3, "Cornering":2, "Suspension":2, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0,"RetiredYn": 0, "StopCount":0, "Championship":0, "Results":{}},
           ]
-races = [   {"Name":"Austrian Grand Prix",          "Laps":71, "FastestLap":0.00, "SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00, "Pit":{"BasePitTime":25}, "Segments":[{"PassModifier":5, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":32, "HighTime":45},   {"PassModifier":4,  "Test":"Cornering", "CarTest":"Cornering",  "LowTime":19, "HighTime":25},        {"PassModifier":6, "CarTest":"Suspension", "Test":"Cornering",  "LowTime":43, "HighTime":55}]}, 
-            {"Name":"Hungarian Grand Prix",         "Laps":70, "FastestLap":0.00, "SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":35}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Cornering", "LowTime":50, "HighTime":56},   {"PassModifier":2, "Test":"Cornering",   "CarTest":"Acceleration",  "LowTime":43, "HighTime":49},        {"PassModifier":1, "CarTest":"Suspension", "Test":"Steering",   "LowTime":63, "HighTime":69}]}, 
-            {"Name":"British Grand Prix",           "Laps":52, "FastestLap":0.00, "SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":20}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":23, "HighTime":29},   {"PassModifier":3,  "Test":"Cornering", "CarTest":"Suspension",  "LowTime":43, "HighTime":56},        {"PassModifier":3, "CarTest":"Cornering", "Test":"Steering",   "LowTime":24, "HighTime":34}]},
-
+races = [   {"Name":"Austrian Grand Prix",          "Laps":71, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00, "Pit":{"BasePitTime":25}, "Segments":[{"PassModifier":5, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":32, "HighTime":45},   {"PassModifier":4,  "Test":"Cornering", "CarTest":"Cornering",  "LowTime":19, "HighTime":25},        {"PassModifier":6, "CarTest":"Suspension", "Test":"Cornering",  "LowTime":43, "HighTime":55}]}, 
+            {"Name":"Hungarian Grand Prix",         "Laps":70, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":35}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Cornering", "LowTime":50, "HighTime":56},   {"PassModifier":2, "Test":"Cornering",   "CarTest":"Acceleration",  "LowTime":43, "HighTime":49},        {"PassModifier":1, "CarTest":"Suspension", "Test":"Steering",   "LowTime":63, "HighTime":69}]}, 
+            {"Name":"British Grand Prix",           "Laps":52, "FastestLap":0.00, "LapUnderYellow":0,"SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":20}, "Segments":[{"PassModifier":2, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":23, "HighTime":29},   {"PassModifier":3,  "Test":"Cornering", "CarTest":"Suspension",  "LowTime":43, "HighTime":56},        {"PassModifier":3, "CarTest":"Cornering", "Test":"Steering",   "LowTime":24, "HighTime":34}]},
         ]
 points = [25,18,15,12,10,8,6,4,2,1]
 tires  = {  
             # NormalWear - For each lap how much are we reducing this?
             # SuccessBonus - When we succeed on a sector what is the maximum we can gain from that section
-            # Reduction Threshold - ???
+            # Reduction Threshold - This is the point where tires start to reduce the possibility of getting a bonus
             # NormalPitRangeStart - When does the game start thinking about a pit stop?
-            "Soft" :    {"NormalWear":2, "SuccessBonus":4, "ReductionThreshold":45,     "NormalPitRangeStart":50, "CriticalErrorTireWear": 3},
-            "Medium" :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":25,    "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2},
-            "Hard" :    {"NormalWear":1, "SuccessBonus":2, "ReductionThreshold":15,    "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1},
+            "Soft" :    {"NormalWear":2, "SuccessBonus":4, "ReductionThreshold":50,     "NormalPitRangeStart":50, "CriticalErrorTireWear": 3},
+            "Medium" :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":35,    "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2},
+            "Hard" :    {"NormalWear":1, "SuccessBonus":2, "ReductionThreshold":25,    "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1},
         }
 
 # Run each race and report our results
