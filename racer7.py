@@ -12,6 +12,7 @@ def resetDriverScores(race):
         driver["StopCount"] = 0
         driver["RetiredYn"] = 0
         driver["LastSegmentTime"] = 0
+        driver["TireChoices"] = ""
         driver["Results"][race["Name"]] = {}
 
 def lightOrHeavyRain():
@@ -80,6 +81,8 @@ def calculateWeather(race):
         priorLapWeather = forecast
         weatherForecast.append(forecast)
 
+    race["WeatherForecast"] = weatherForecast
+
     return weatherForecast
 
 def checkYellowFlag(race):
@@ -91,33 +94,98 @@ def checkYellowFlag(race):
         else:
             race["LapUnderYellow"] += 1
 
-def pitStop(driver, race):
-    currentLapTime = 0
+
+def assignStartTireForRace(race, racers):
+    i = 0
+    for driver in racers:
+        driver["TireType"] = chooseTire(race, driver, 0, i)
+        i += 1
+
+def doIHaveTheRightTire(driver, race, lapNumber):
+    currentWeather = race["WeatherForecast"][lapNumber]
+    if(lapNumber + 1 != race['Laps']):
+        nextWeather    = race["WeatherForecast"][lapNumber + 1]
+    else:
+        nextWeather = currentWeather
+
+    currentTire    = driver["TireType"]
+    correctTire = 1
+    if((nextWeather == "cloudy" or nextWeather == "clear") and (currentTire == "Wet" or currentTire == "Intermediate")):
+        correctTire = 0
+    elif((nextWeather == "lightrain" or nextWeather == "heavyrain") and (currentTire != "Wet" and currentTire != "Intermediate")):
+        correctTire = 0
+
+    #If our team is terrible at forecasting
+    teamForecastCheck = random.randrange(1,7)
+    if(teamForecastCheck > driver["Team"]["Forecasting"]):
+        correctTire = 1
+
+    return correctTire
+
+
+def pitStop(driver, race, lapCount, position):
+    pitAdditionalTime = 0
     #Take the drivers tempurment into affect here, will they stay out?!
     temperTest = random.randrange(1,7)
     # No matter how pissed off you are you won't stay out on bad tires
     if(driver["TireWear"] < 3):
         temperTest = 1
     if(temperTest <= driver["Driver"]["Tempurment"]):
-        # print("Pit Start " + str(currentLapTime))
+        # print("Pit Start " + str(pitAdditionalTime))
         # Pit - Add our variance
-        currentLapTime += race["Pit"]["BasePitTime"]
+        pitAdditionalTime += race["Pit"]["BasePitTime"]
         # Add pit lap time variances
-        currentLapTime += random.randrange(0,3)
+        pitAdditionalTime += random.randrange(0,3)
         # Add Base Pit Time
-        currentLapTime += 2
+        pitAdditionalTime += 2
         # Check for Pit crew skill
         pitCrewSkillCheck = random.randrange(1,6)
         # See if they failed this test
         if(pitCrewSkillCheck > driver["Team"]["PitSkill"]):
-            currentLapTime += random.randrange(0,4)
+            pitAdditionalTime += random.randrange(0,4)
         #Reset Tires
         driver["TireWear"] = 100
+        
         #Set our tires to Medium (For now)
-        driver["TireType"] = "Medium"
+        driver["TireType"] = chooseTire(race, driver, lapCount, position)
+        
         driver["StopCount"] += 1
 
-    return currentLapTime
+        #print("I pitted time " + str(pitAdditionalTime) + " New Tire " + driver["TireType"])
+
+        #Update our drivers current time
+        driver["CurrentLapTime"] += pitAdditionalTime
+        driver["LastSegmentTime"] = pitAdditionalTime
+
+def chooseTire(race, driver, lapCount, position):
+    tireType = ""
+
+    currentWeather = race["WeatherForecast"][lapCount]
+    if(lapCount + 1 != race["Laps"]):
+        nextWeather = race["WeatherForecast"][lapCount + 1]
+    else:
+        nextWeather = currentWeather
+    idealTire = weather[nextWeather]["IdealTire"]
+    # On the first lap we are going to put on whatever tire is ideal given the weather type
+    if(lapCount == 0):
+        tireType = idealTire
+    else:
+        # If the ideal tire would be soft then we can choose our options based on other factors
+        if(idealTire == "Soft"):
+            #Going to allow the AI to kind of guess at this one
+            tireRoll = random.randrange(1,7)
+            if(tireRoll > 3):
+                tireType = "Medium"
+            else:
+                tireType = "Hard"
+        #If it is not soft we will go with the ideal for now
+        else:
+            tireType = idealTire
+
+    
+    driver["TireChoices"] += " " + tires[tireType]["Abbreviation"] + "("+ str(lapCount) +")"
+    
+    return tireType
 
 # Handles printing, also accumulating points for championship (should be another function)
 def printRaceResults(race, drivers):
@@ -141,7 +209,7 @@ def printRaceResults(race, drivers):
             displayPolePosition = str(polePosition)
             displayTime = str(datetime.timedelta(seconds=driver["Time"]))
 
-        print(displayPolePosition + '\t' + driver["Name"] + ' ('+ driver["Make"] +') \t\t@' + displayTime + ' \t S('+ str(driver["StopCount"]) +') \t O('+ str(driver["OvertakeCount"]) +') \tPoints:' + str(driver["Championship"]))
+        print(displayPolePosition + '\t' + driver["Name"] + ' ('+ driver["Make"] +') \t\t@' + displayTime + ' \t S('+ str(driver["StopCount"]) +') \t O('+ str(driver["OvertakeCount"]) +') \t Tires: '+ driver["TireChoices"] +' \tPoints:' + str(driver["Championship"]))
         polePosition +=1
     
     print("     ")
@@ -254,10 +322,6 @@ def raceSegment(race, lapNumber, segment, drivers, currentWeather):
                 else:
                     currentSegmentTime += segmentBonus
 
-            # Should I pit this lap logic?
-            if(driver["TireWear"] < NormalPitRangeStart):
-                currentSegmentTime += pitStop(driver, race)
-    
             #Accumulate driver details
             driver["CurrentLapTime"] += currentSegmentTime
             driver["LastSegmentTime"] = currentSegmentTime
@@ -266,13 +330,15 @@ def raceSegment(race, lapNumber, segment, drivers, currentWeather):
             driver["LastSegmentTime"] = 9999
         driverIterator += 1
 
-
 def performRace(race, drivers):
     #Get the weather forecast for the race
     weatherForceast = calculateWeather(race)
     #Reset all of our scores to 0
     resetDriverScores(race)
-    
+
+    #Assign the correct tire based on the race
+    assignStartTireForRace(race,drivers)
+
     # Run our race
     for i in range(race["Laps"]):
         # Check to see if yellow has a chance of going away
@@ -285,8 +351,19 @@ def performRace(race, drivers):
             raceSegment(race, i, segment, drivers, currentWeather)
 
         # Accumulate driver details and reset other details
+        driverIterator = 0 
         for driver in drivers:
-            
+            if(driver["RetiredYn"] == 0):
+                #At end of lap we test if we took a pit stop
+                allowPitStop = 0
+                if(driver["TireWear"] < tires[driver["TireType"]]["NormalPitRangeStart"]):
+                    allowPitStop = 1
+                elif(doIHaveTheRightTire(driver, race, i) == 0):
+                    allowPitStop = 1
+                
+                if(allowPitStop == 1):
+                    pitStop(driver, race, i, driverIterator)
+
             # Update our tire wear with our normal tire wear at the end of the lap
             driver["TireWear"]                      -= tires[driver["TireType"]]["NormalWear"]
             driver["Time"]                          += driver["CurrentLapTime"]
@@ -299,6 +376,8 @@ def performRace(race, drivers):
             driver["Results"][race["Name"]][i]["CurrentTire"] = driver["TireType"]
             if(driver["RetiredYn"] == 1):
                 driver["Time"] = 99999999999
+
+            driverIterator += 1
 
         # Sort our drivers for the next lap, this allows us to know who is in 1,2,3 etc
         drivers = sorted(drivers, key=itemgetter('Time'))
@@ -318,26 +397,26 @@ def accumulateRaceState(race):
 
 # Get our drivers setup
 drivers = [ 
-            {"Name":"Lewis Hamlton",        "Make":"Mercades",       "Driver": {"Steering":5, "Cornering":5, "Tempurment":4, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":5, "Suspension":6, "EngineReliability":98}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Valtteri Bottas",      "Make":"Mercades",       "Driver": {"Steering":5, "Cornering":4, "Tempurment":6, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":5, "Suspension":6, "EngineReliability":98}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Sebastian Vettel",     "Make":"Ferrari",        "Driver": {"Steering":5, "Cornering":5, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":6, "Suspension":5, "EngineReliability":98}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Charles Leclerc",      "Make":"Ferrari",        "Driver": {"Steering":5, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":6, "Suspension":5, "EngineReliability":96}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Alex Albon",           "Make":"Red Bull",       "Driver": {"Steering":3, "Cornering":4, "Tempurment":6, "Overtake":6}, "Car": {"Acceleration":6, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Max Verstappen",       "Make":"Red Bull",       "Driver": {"Steering":5, "Cornering":5, "Tempurment":4, "Overtake":5}, "Car": {"Acceleration":6, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Lando Norris",         "Make":"McLaren",        "Driver": {"Steering":6, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Carlos Sainz",         "Make":"McLaren",        "Driver": {"Steering":5, "Cornering":4, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Daniel Ricciardo",     "Make":"Renault",        "Driver": {"Steering":3, "Cornering":4, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Esteban Ocon",         "Make":"Renault",        "Driver": {"Steering":4, "Cornering":3, "Tempurment":5, "Overtake":5}, "Car": {"Acceleration":5, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Pierre Gasly",         "Make":"AlphaTauri",     "Driver": {"Steering":3, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":3, "Suspension":5, "EngineReliability":94}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Daniil Kvyat",         "Make":"AlphaTauri",     "Driver": {"Steering":4, "Cornering":3, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":3, "Suspension":4, "EngineReliability":93}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Sergio Perez",         "Make":"Racing Point",   "Driver": {"Steering":3, "Cornering":3, "Tempurment":4, "Overtake":6}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":4, "EngineReliability":92}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Lance Stroll",         "Make":"Racing Point",   "Driver": {"Steering":4, "Cornering":5, "Tempurment":5, "Overtake":6}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":5, "EngineReliability":91}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Kimi Raikkonen",       "Make":"Alfa Romeo",     "Driver": {"Steering":2, "Cornering":2, "Tempurment":2, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Antonio Giovinazzi",   "Make":"Alfa Romeo",     "Driver": {"Steering":5, "Cornering":2, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Romain Grosjean",      "Make":"Haas",           "Driver": {"Steering":2, "Cornering":6, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":5, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Kevin Magnussen",      "Make":"Haas",           "Driver": {"Steering":4, "Cornering":2, "Tempurment":4, "Overtake":3}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"George Russell",       "Make":"Williams",       "Driver": {"Steering":2, "Cornering":4, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":3, "Cornering":3, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
-            {"Name":"Nicholas Latifi",      "Make":"Williams",       "Driver": {"Steering":3, "Cornering":2, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":3, "Cornering":3, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "Results":{}},
+            {"Name":"Lewis Hamlton",        "Make":"Mercades",       "Driver": {"Steering":5, "Cornering":5, "Tempurment":4, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":5, "Suspension":6, "EngineReliability":98}, "Team":{"PitSkill":6, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Valtteri Bottas",      "Make":"Mercades",       "Driver": {"Steering":5, "Cornering":4, "Tempurment":6, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":5, "Suspension":6, "EngineReliability":98}, "Team":{"PitSkill":6, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Sebastian Vettel",     "Make":"Ferrari",        "Driver": {"Steering":5, "Cornering":5, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":6, "Suspension":5, "EngineReliability":98}, "Team":{"PitSkill":6, "Forecasting":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Charles Leclerc",      "Make":"Ferrari",        "Driver": {"Steering":5, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":6, "Cornering":6, "Suspension":5, "EngineReliability":96}, "Team":{"PitSkill":6, "Forecasting":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Alex Albon",           "Make":"Red Bull",       "Driver": {"Steering":3, "Cornering":4, "Tempurment":6, "Overtake":6}, "Car": {"Acceleration":6, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":6, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Max Verstappen",       "Make":"Red Bull",       "Driver": {"Steering":5, "Cornering":5, "Tempurment":4, "Overtake":5}, "Car": {"Acceleration":6, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":6, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Lando Norris",         "Make":"McLaren",        "Driver": {"Steering":6, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Carlos Sainz",         "Make":"McLaren",        "Driver": {"Steering":5, "Cornering":4, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Daniel Ricciardo",     "Make":"Renault",        "Driver": {"Steering":3, "Cornering":4, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":5, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Esteban Ocon",         "Make":"Renault",        "Driver": {"Steering":4, "Cornering":3, "Tempurment":5, "Overtake":5}, "Car": {"Acceleration":5, "Cornering":4, "Suspension":4, "EngineReliability":95}, "Team":{"PitSkill":4, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Pierre Gasly",         "Make":"AlphaTauri",     "Driver": {"Steering":3, "Cornering":4, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":3, "Suspension":5, "EngineReliability":94}, "Team":{"PitSkill":4, "Forecasting":6}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Daniil Kvyat",         "Make":"AlphaTauri",     "Driver": {"Steering":4, "Cornering":3, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":3, "Suspension":4, "EngineReliability":93}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Sergio Perez",         "Make":"Racing Point",   "Driver": {"Steering":3, "Cornering":3, "Tempurment":4, "Overtake":6}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":4, "EngineReliability":92}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Lance Stroll",         "Make":"Racing Point",   "Driver": {"Steering":4, "Cornering":5, "Tempurment":5, "Overtake":6}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":5, "EngineReliability":91}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Kimi Raikkonen",       "Make":"Alfa Romeo",     "Driver": {"Steering":2, "Cornering":2, "Tempurment":2, "Overtake":4}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Antonio Giovinazzi",   "Make":"Alfa Romeo",     "Driver": {"Steering":5, "Cornering":2, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":5, "Cornering":5, "Suspension":4, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":4}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Romain Grosjean",      "Make":"Haas",           "Driver": {"Steering":2, "Cornering":6, "Tempurment":3, "Overtake":4}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":5, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Kevin Magnussen",      "Make":"Haas",           "Driver": {"Steering":4, "Cornering":2, "Tempurment":4, "Overtake":3}, "Car": {"Acceleration":4, "Cornering":4, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"George Russell",       "Make":"Williams",       "Driver": {"Steering":2, "Cornering":4, "Tempurment":5, "Overtake":3}, "Car": {"Acceleration":3, "Cornering":3, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
+            {"Name":"Nicholas Latifi",      "Make":"Williams",       "Driver": {"Steering":3, "Cornering":2, "Tempurment":5, "Overtake":4}, "Car": {"Acceleration":3, "Cornering":3, "Suspension":3, "EngineReliability":90}, "Team":{"PitSkill":4, "Forecasting":5}, "TireType":"Soft",  "TireWear": 100, "Time":0, "CurrentLapTime": 0,"LastSegmentTime":0,"RetiredYn": 0, "OvertakeCount":0,"StopCount":0, "Championship":0, "TireChoices":"", "Results":{}},
           ]
 races = [   {"Name":"Austrian Grand Prix",          "Laps":71, "FastestLap":0.00,"DRSEnabled":0, "AllowDRSOnLap":3, "YellowFlagYn" : 0,"LapUnderYellow":0, "Month":6, "Region":"Central Europe","SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00, "Pit":{"BasePitTime":25}, "Segments":[{"DRSInSegment":1, "PassModifier":5, "Test":"Steering", "CarTest":"Acceleration",  "LowTime":32, "HighTime":39},   {"DRSInSegment":0,"PassModifier":4,  "Test":"Cornering", "CarTest":"Cornering",  "LowTime":19, "HighTime":25},        {"DRSInSegment":0, "PassModifier":6, "CarTest":"Suspension", "Test":"Cornering",  "LowTime":43, "HighTime":52}]}, 
             {"Name":"Hungarian Grand Prix",         "Laps":70, "FastestLap":0.00,"DRSEnabled":0, "AllowDRSOnLap":3, "YellowFlagYn" : 0,"LapUnderYellow":0, "Month":7, "Region":"Central Europe","SlowestLap":0.00, "FastTotalTime":0.00, "SlowTotalTime":0.00,"Pit":{"BasePitTime":35}, "Segments":[{"DRSInSegment":0, "PassModifier":2, "Test":"Steering", "CarTest":"Cornering", "LowTime":50, "HighTime":56},   {"DRSInSegment":1,"PassModifier":2, "Test":"Cornering",   "CarTest":"Acceleration",  "LowTime":43, "HighTime":49},        {"DRSInSegment":0, "PassModifier":1, "CarTest":"Suspension", "Test":"Steering",   "LowTime":63, "HighTime":69}]}, 
@@ -349,11 +428,11 @@ tires  = {
             # SuccessBonus - When we succeed on a sector what is the maximum we can gain from that section
             # Reduction Threshold - This is the point where tires start to reduce the possibility of getting a bonus
             # NormalPitRangeStart - When does the game start thinking about a pit stop?
-            "Soft"          :  {"NormalWear":2,   "SuccessBonus":4, "ReductionThreshold":50,     "NormalPitRangeStart":50, "CriticalErrorTireWear" : 3},
-            "Medium"        :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":35,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2},
-            "Hard"          :  {"NormalWear":1,   "SuccessBonus":2, "ReductionThreshold":25,     "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1},
-            "Wet"           :  {"NormalWear":.25, "SuccessBonus":1, "ReductionThreshold":15,     "NormalPitRangeStart":15, "CriticalErrorTireWear" : 1},
-            "Intermediate"  :  {"NormalWear":.50, "SuccessBonus":1, "ReductionThreshold":25,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 1},
+            "Soft"          :  {"NormalWear":2,   "SuccessBonus":4, "ReductionThreshold":50,     "NormalPitRangeStart":50, "CriticalErrorTireWear" : 3, "Abbreviation":"S"},
+            "Medium"        :  {"NormalWear":1.5, "SuccessBonus":3, "ReductionThreshold":35,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 2, "Abbreviation":"M"},
+            "Hard"          :  {"NormalWear":1,   "SuccessBonus":2, "ReductionThreshold":25,     "NormalPitRangeStart":10, "CriticalErrorTireWear" : 1, "Abbreviation":"H"},
+            "Wet"           :  {"NormalWear":.25, "SuccessBonus":1, "ReductionThreshold":15,     "NormalPitRangeStart":15, "CriticalErrorTireWear" : 1, "Abbreviation":"W"},
+            "Intermediate"  :  {"NormalWear":.50, "SuccessBonus":1, "ReductionThreshold":25,     "NormalPitRangeStart":25, "CriticalErrorTireWear" : 1, "Abbreviation":"I"},
         }
 # Ideal tire will tell the racers what they should most likely start on
 # Speed reduction is what % we are going to reduce the lowest/highest item by
